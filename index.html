@@ -1151,6 +1151,17 @@ const WEB_NOCONF = !(window.claude && typeof window.claude.use === 'function') &
 const photoUrls = new Map(); // freshly saved local photos, shown before the disk copy is read back
 const cloudUrls = new Map(); // photo id -> pre-authorised OneDrive download address (valid about an hour)
 const blob = id => photoUrls.get(id) || (LOCAL ? 'zdjecia/' + id + '.jpg' : CLOUD ? cloudPhotoUrl(id) : '/_blob/' + id);
+/* photo files (laptop folder and OneDrive): zdjecia/<Wyjazd>_<Miasto>_<8 hex>.jpg, its thumbnail under the same name in zdjecia/miniatury/.
+   A photo id is its path inside zdjecia/ without .jpg, so older random ids (zdjecia/<32 hex>.jpg, thumbnails next to them) keep working. */
+const THUMBS = 'miniatury';
+const randHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, '0')).join('');
+const FILE_CH = { ø: 'o', Ø: 'O', æ: 'ae', Æ: 'Ae', ß: 'ss', ł: 'l', Ł: 'L', đ: 'd', Đ: 'D', ı: 'i', œ: 'oe', Œ: 'Oe' };
+const fileSlug = (s, max) => String(s || '').replace(/[øØæÆßłŁđĐıœŒ]/g, c => FILE_CH[c]).normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '');
+function photoName(placeId) { // e.g. "Urodzinowy-wypad_Krakow_3f9a2c1b"
+  const p = S.places[placeId] || {}, t = S.trips[p.tripId];
+  return ([fileSlug(t && t.title, 40), fileSlug(p.name, 30)].filter(Boolean).join('_') || 'zdjecie') + '_' + randHex(4);
+}
 const hideBroken = e => { e.target.style.visibility = 'hidden'; };
 
 /* country detection for the pink "visited" fill */
@@ -2231,17 +2242,23 @@ async function saveFolder() {
   }
   S.lf.saving = false; renderStatusBox();
 }
+async function photoDir(id, create) { // 'miniatury/x' -> [folder zdjecia/miniatury, 'x.jpg']
+  const parts = String(id).split('/');
+  let d = await dirHandle.getDirectoryHandle('zdjecia', { create: !!create });
+  for (const s of parts.slice(0, -1)) d = await d.getDirectoryHandle(s, { create: !!create });
+  return [d, parts[parts.length - 1] + '.jpg'];
+}
 const folderAssets = {
-  async upload(data) {
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
-    const z = await dirHandle.getDirectoryHandle('zdjecia', { create: true });
-    await writeFileTo(z, id + '.jpg', data);
+  async upload(data, o = {}) {
+    const id = o.name || randHex(16);
+    const [z, fn] = await photoDir(id, true);
+    await writeFileTo(z, fn, data);
     const url = URL.createObjectURL(data);
     photoUrls.set(id, url);
     return { id, url, sizeBytes: data.size, contentType: 'image/jpeg' };
   },
   async delete(id) {
-    try { const z = await dirHandle.getDirectoryHandle('zdjecia'); await z.removeEntry(id + '.jpg'); return { deleted: true }; }
+    try { const [z, fn] = await photoDir(id, false); await z.removeEntry(fn); return { deleted: true }; }
     catch (e) { return { deleted: false }; }
   },
   async list() { return { assets: [], usage: {} }; }
@@ -2343,16 +2360,18 @@ const cloudAsk = new Set();
 async function cloudListPhotos() {
   if (!cloud) return;
   cloudListAt = Date.now();
-  let url = cpath('zdjecia') + '/children?$top=999';
-  try {
-    while (url) {
-      const r = await gfetch(url);
-      if (!r.ok) break;
-      const j = await r.json();
-      for (const it of j.value || []) if (it.file && it['@microsoft.graph.downloadUrl']) cloudUrls.set(String(it.name).replace(/\.jpe?g$/i, ''), it['@microsoft.graph.downloadUrl']);
-      url = j['@odata.nextLink'] || null;
-    }
-  } catch (e) { console.warn(e); }
+  for (const [sub, pre] of [['zdjecia', ''], ['zdjecia/' + THUMBS, THUMBS + '/']]) { // photos, then thumbnails (a map with only old photos has no miniatury yet)
+    let url = cpath(sub) + '/children?$top=999';
+    try {
+      while (url) {
+        const r = await gfetch(url);
+        if (!r.ok) break;
+        const j = await r.json();
+        for (const it of j.value || []) if (it.file && it['@microsoft.graph.downloadUrl']) cloudUrls.set(pre + String(it.name).replace(/\.jpe?g$/i, ''), it['@microsoft.graph.downloadUrl']);
+        url = j['@odata.nextLink'] || null;
+      }
+    } catch (e) { console.warn(e); }
+  }
   scheduleRender();
 }
 function cloudPhotoUrl(id) {
@@ -2367,9 +2386,11 @@ function cloudPhotoUrl(id) {
   return PIXEL;
 }
 const cloudAssets = {
-  async upload(data) {
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
-    const r = await gfetch(cpath(`zdjecia/${id}.jpg`) + '/content', { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: data });
+  async upload(data, o = {}) {
+    const id = o.name || randHex(16);
+    const put = () => gfetch(cpath(`zdjecia/${id}.jpg`) + '/content', { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: data });
+    let r = await put();
+    if (!r.ok && id.includes('/') && [400, 404, 409].includes(r.status) && (await cloudEnsureFolder('zdjecia', id.split('/')[0]))) r = await put(); // miniatury was missing
     if (r.status === 403) throw Object.assign(new Error('forbidden'), { code: 'forbidden' });
     if (!r.ok) throw new Error('upload ' + r.status);
     const it = await r.json().catch(() => ({}));
@@ -2526,16 +2547,17 @@ async function cloudMkdir(parent, name) { // folder inside a folder (parent = Gr
   }
   throw await graphErr(r, 'folder ' + name);
 }
-async function cloudEnsureKopie(c = cloud || { root: APPROOT }) { // dane/kopie for daily backups; best effort (a PUT to the path normally creates it)
+async function cloudEnsureFolder(sub, name, c = cloud || { root: APPROOT }) { // a subfolder like dane/kopie or zdjecia/miniatury; best effort (a PUT to the path normally creates it)
   try {
-    const r = await gfetch(c.root + ':/dane:?$select=id,parentReference');
+    const r = await gfetch(cpath(sub, c) + '?$select=id,parentReference');
     if (!r.ok) return false;
     const it = await r.json();
     const drv = it.parentReference && it.parentReference.driveId;
-    await cloudMkdir(drv ? `/drives/${drv}/items/${it.id}` : `/me/drive/items/${it.id}`, 'kopie');
+    await cloudMkdir(drv ? `/drives/${drv}/items/${it.id}` : `/me/drive/items/${it.id}`, name);
     return true;
   } catch (e) { console.warn(e); return false; }
 }
+const cloudEnsureKopie = c => cloudEnsureFolder('dane', 'kopie', c); // daily backups
 async function cloudPutRetry(path, body, type, step) { // a brand-new folder can need a moment before OneDrive accepts files in it
   let r;
   for (let i = 0; i < 4; i++) {
@@ -3155,11 +3177,14 @@ async function uploadFiles(placeId, files) {
   const job = S.uploads[placeId] = { total: list.length, done: 0, failed: 0 };
   render();
   let ok = 0, heic = false;
+  const own = assets === folderAssets || assets === cloudAssets; // our own files get readable names; the Claude version names them itself
+  const opt = name => (own ? { type: 'image/jpeg', name } : { type: 'image/jpeg' });
   for (const f of list) {
     try {
       const im = await prepImage(f);
-      const a = await assets.upload(im.full, { type: 'image/jpeg' });
-      const b = await assets.upload(im.thumb, { type: 'image/jpeg' });
+      const nm = photoName(placeId);
+      const a = await assets.upload(im.full, opt(nm));
+      const b = await assets.upload(im.thumb, opt(THUMBS + '/' + nm));
       await patchPlace(placeId, d => { d.photos.push({ id: a.id, t: b.id, w: im.w, h: im.h, c: '', at: Date.now() }); if (!d.cover) d.cover = a.id; });
       ok++;
     } catch (e) {

@@ -12,7 +12,8 @@ tutaj** – leżą na OneDrive osoby, która założyła mapę, w folderze aplik
 Aplikacje/Mapa podróży/  (OneDrive)
 ├── dane/dane.json       ← wyjazdy, miasta, wspomnienia
 ├── dane/kopie/          ← dzienne kopie zapasowe
-└── zdjecia/*.jpg        ← zdjęcia i miniatury
+└── zdjecia/             ← zdjęcia, np. Portugalia-Paryz_Lizbona_3f9a2c1b.jpg
+    └── miniatury/       ← te same zdjęcia w małym rozmiarze, pod tą samą nazwą
 ```
 
 Strona (GitHub Pages) loguje osobę kontem Microsoft i czyta oraz zapisuje te pliki przez Microsoft Graph.
