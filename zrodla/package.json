@@ -1,6 +1,6 @@
 {
   "name": "mapa-naszych-podrozy",
-  "version": "1.13.1",
+  "version": "1.13.2",
   "private": true,
   "type": "module",
   "description": "Pastelowa mapa podróży: kraje, wyjazdy, zdjęcia, wspomnienia i tipy na powrót.",

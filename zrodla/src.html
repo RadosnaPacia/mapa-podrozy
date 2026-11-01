@@ -2419,7 +2419,11 @@ async function cloudExtras(json, data) { // best effort: dane.js for the laptop 
     const today = toIso(new Date());
     if (S.lf.backupDay !== today && cloud.prevText) {
       const ex = await gfetch(cpath(`dane/kopie/dane-${today}.json`));
-      if (ex.status === 404) await gfetch(cpath(`dane/kopie/dane-${today}.json`) + '/content', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: cloud.prevText });
+      if (ex.status === 404) {
+        const put = () => gfetch(cpath(`dane/kopie/dane-${today}.json`) + '/content', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: cloud.prevText });
+        const r = await put();
+        if (!r.ok && (await cloudEnsureKopie())) await put(); // the folder was missing
+      }
       S.lf.backupDay = today;
     }
     await gfetch(cpath('dane/dane.js') + '/content', { method: 'PUT', headers: { 'Content-Type': 'text/javascript' }, body: '// Dane „Mapy naszych podróży”. Zapisano: ' + data.zapisano + '\nwindow.MAPA_DANE = ' + json.trim() + ';\n' });
@@ -2506,9 +2510,40 @@ async function cloudOpen(fo) {
   }
 }
 const cloudLink = () => `${msRedirect()}?d=${encodeURIComponent(cloud.d)}&f=${encodeURIComponent(cloud.f)}`;
-async function cloudMkdir(parent, name) { // folder inside the map; already existing is fine
-  const r = await gfetch(parent + '/children', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }) });
-  if (!r.ok && r.status !== 409) throw new Error('mkdir ' + r.status);
+const graphErr = async (r, step) => { // readable error with Microsoft's code, e.g. "folder dane: 403 accessDenied"
+  let code = '';
+  try { const j = await r.json(); code = (j.error && (j.error.code || j.error.message)) || ''; } catch (e) { /* no body */ }
+  return Object.assign(new Error(step), { step, status: r.status, gcode: code });
+};
+async function cloudMkdir(parent, name) { // folder inside a folder (parent = Graph path of a folder item); returns its id; existing is fine
+  let r = await gfetch(parent + '/children', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }) });
+  if (r.ok) return (await r.json()).id;
+  if (r.status === 409) { // already there: find its id
+    const q = await gfetch(parent + '/children?$select=id,name,folder&$top=999');
+    if (q.ok) { const it = ((await q.json()).value || []).find(x => x.folder && String(x.name).toLowerCase() === name.toLowerCase()); if (it) return it.id; }
+  }
+  throw await graphErr(r, 'folder ' + name);
+}
+async function cloudEnsureKopie(c = cloud || { root: APPROOT }) { // dane/kopie for daily backups; best effort, two ways
+  try { await cloudMkdir(c.root + ':/dane:', 'kopie'); return true; } catch (e) { /* try by id */ }
+  try {
+    const r = await gfetch(c.root + ':/dane:?$select=id,parentReference');
+    if (!r.ok) return false;
+    const it = await r.json();
+    const drv = it.parentReference && it.parentReference.driveId;
+    await cloudMkdir(drv ? `/drives/${drv}/items/${it.id}` : `/me/drive/items/${it.id}`, 'kopie');
+    return true;
+  } catch (e) { console.warn(e); return false; }
+}
+async function cloudPutRetry(path, body, type, step) { // a brand-new folder can need a moment before OneDrive accepts files in it
+  let r;
+  for (let i = 0; i < 4; i++) {
+    r = await gfetch(path, { method: 'PUT', headers: { 'Content-Type': type }, body });
+    if (r.ok || ![404, 409, 423, 500, 502, 503, 504].includes(r.status)) break;
+    await sleep(800 * (i + 1));
+  }
+  if (!r.ok) throw await graphErr(r, step);
+  return r;
 }
 function newMapModal() {
   openModal((md, close) => {
@@ -2537,15 +2572,22 @@ function newMapModal() {
         travelers: { [id]: { name, me: true, avatar, color: 'lav', order: 0, createdAt: Date.now() } }
       };
       try {
-        await cloudMkdir(APPROOT, 'dane'); await cloudMkdir(APPROOT, 'zdjecia'); await cloudMkdir(APPROOT + ':/dane:', 'kopie');
+        // only documented app-folder calls are required: POST approot/children and PUT approot:/path:/content
+        await cloudMkdir(APPROOT, 'dane');
         const json = JSON.stringify(data, null, 2) + '\n';
-        const r = await gfetch(APPROOT + ':/dane/dane.json:/content', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: json });
-        if (!r.ok) throw new Error('create ' + r.status);
+        await cloudPutRetry(APPROOT + ':/dane/dane.json:/content', json, 'application/json', 'plik dane.json');
+        try { await cloudMkdir(APPROOT, 'zdjecia'); } catch (x) { console.warn(x); } // not required to start
+        await cloudEnsureKopie();
         await gfetch(APPROOT + ':/dane/dane.js:/content', { method: 'PUT', headers: { 'Content-Type': 'text/javascript' }, body: '// Dane „Mapy naszych podróży”. Zapisano: ' + data.zapisano + '\nwindow.MAPA_DANE = ' + json.trim() + ';\n' }).catch(() => {});
         close();
         toast('Mapa gotowa! Dodaj pierwszy wyjazd.');
         await cloudOpen(cloudOwn);
-      } catch (x) { console.warn(x); go.disabled = false; err.textContent = 'Nie udało się założyć mapy na OneDrive. Spróbuj jeszcze raz.'; err.hidden = false; }
+      } catch (x) {
+        console.warn(x); go.disabled = false;
+        const why = x.code === 'auth' ? 'sesja wygasła, zaloguj się ponownie' : x.step ? `${x.step}: ${x.status || ''} ${x.gcode || ''}`.trim() : (x.message || 'brak połączenia');
+        err.textContent = `Nie udało się założyć mapy na OneDrive (${why}). Spróbuj jeszcze raz, a jeśli błąd wróci, zrób zrzut tego komunikatu.`;
+        err.hidden = false;
+      }
     } },
       h('h3', null, 'Twoja mapa'),
       h('p', { class: 'hint', style: 'margin-top:-4px' }, `Założę na Twoim OneDrive folder „Aplikacje/${(cloudOwn && cloudOwn.name) || 'Mapa podróży'}” z podfolderami dane i zdjecia. Ta strona widzi tylko ten jeden folder.`),
