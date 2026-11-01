@@ -2526,8 +2526,7 @@ async function cloudMkdir(parent, name) { // folder inside a folder (parent = Gr
   }
   throw await graphErr(r, 'folder ' + name);
 }
-async function cloudEnsureKopie(c = cloud || { root: APPROOT }) { // dane/kopie for daily backups; best effort, two ways
-  try { await cloudMkdir(c.root + ':/dane:', 'kopie'); return true; } catch (e) { /* try by id */ }
+async function cloudEnsureKopie(c = cloud || { root: APPROOT }) { // dane/kopie for daily backups; best effort (a PUT to the path normally creates it)
   try {
     const r = await gfetch(c.root + ':/dane:?$select=id,parentReference');
     if (!r.ok) return false;
@@ -2574,12 +2573,11 @@ function newMapModal() {
         travelers: { [id]: { name, me: true, avatar, color: 'lav', order: 0, createdAt: Date.now() } }
       };
       try {
-        // only documented app-folder calls are required: POST approot/children and PUT approot:/path:/content
-        await cloudMkdir(APPROOT, 'dane');
+        // Graph rejects folder creates on the app-folder alias (400 invalidRequest, since autumn 2026),
+        // but a PUT to a path creates the missing folders – so the map starts with writing dane/dane.json
         const json = JSON.stringify(data, null, 2) + '\n';
         await cloudPutRetry(APPROOT + ':/dane/dane.json:/content', json, 'application/json', 'plik dane.json');
-        try { await cloudMkdir(APPROOT, 'zdjecia'); } catch (x) { console.warn(x); } // not required to start
-        await cloudEnsureKopie();
+        if (cloudOwn && cloudOwn.f) try { await cloudMkdir(`/me/drive/items/${cloudOwn.f}`, 'zdjecia'); } catch (x) { console.warn(x); } // visible right away; the first photo would create it anyway
         await gfetch(APPROOT + ':/dane/dane.js:/content', { method: 'PUT', headers: { 'Content-Type': 'text/javascript' }, body: '// Dane „Mapy naszych podróży”. Zapisano: ' + data.zapisano + '\nwindow.MAPA_DANE = ' + json.trim() + ';\n' }).catch(() => {});
         close();
         toast('Mapa gotowa! Dodaj pierwszy wyjazd.');
