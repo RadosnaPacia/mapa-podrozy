@@ -395,12 +395,7 @@ body.panel-hidden .panelToggle svg{transform:scaleX(-1)}
 .who-btn[aria-pressed="true"]{border-color:var(--cd,var(--accent-deep));color:var(--ink);background:var(--cs,var(--accent-soft))}
 .rwho{display:flex;justify-content:center;align-items:center;gap:8px;margin-top:6px;font-size:13px;font-weight:700;color:var(--ink-2);flex-wrap:wrap}
 .pav.grp{background:var(--paper)}
-.cplist{display:grid;gap:4px;margin:8px 0;max-height:46vh;overflow:auto}
-.cpitem{display:flex;align-items:center;gap:8px;border:0;background:#fff;border-radius:14px;padding:9px 12px;font:700 15px var(--font-body);color:var(--ink);cursor:pointer;box-shadow:0 2px 0 var(--line);text-align:left}
-.cpitem:hover{background:var(--accent-soft)}
-.cpitem .spacer{flex:1}
-.cpcrumb{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px;flex-wrap:wrap}
-.cpcrumb:empty{display:none}
+
 .ssec{background:#fff;border-radius:22px;padding:14px;box-shadow:0 3px 0 var(--line);margin-top:12px}
 .ssec h4{margin:0 0 8px;font:400 13px var(--font-pixel);letter-spacing:1px;text-transform:uppercase;color:var(--ink-2)}
 .sbig b{display:block;font:800 30px/1.05 var(--font-display);color:var(--ink)}
@@ -2073,12 +2068,14 @@ async function tryAutoResume() {
 }
 function seedData(data) { // one-time additions for older data files; returns true when something was added
   let seeded = false;
-  if ((!data.travelers || !Object.keys(data.travelers).length) && Object.keys(data.trips || {}).length) { // first run with profiles: Pati (me) and Jula on every trip
-    data.travelers = { pati: { name: 'Pati', me: true, color: 'lav', avatar: '🌸', order: 0 }, jula: { name: 'Jula', color: 'pink', avatar: '🌷', order: 1 } };
-    for (const t of Object.values(data.trips || {})) if (!Array.isArray(t.travelers)) t.travelers = ['pati', 'jula'];
-    seeded = true;
-  }
   const meta = Object.assign({}, data.meta);
+  if (!meta.profile) { // maps from before 1.7: Pati (me) and Jula on every trip; new maps are created with meta.profile
+    if ((!data.travelers || !Object.keys(data.travelers).length) && Object.keys(data.trips || {}).length) {
+      data.travelers = { pati: { name: 'Pati', me: true, color: 'lav', avatar: '🌸', order: 0 }, jula: { name: 'Jula', color: 'pink', avatar: '🌷', order: 1 } };
+      for (const t of Object.values(data.trips || {})) if (!Array.isArray(t.travelers)) t.travelers = ['pati', 'jula'];
+    }
+    meta.profile = 1; data.meta = meta; seeded = true;
+  }
   if (!meta.grupy) { // first run with groups (1.8): the pair Pati i Jula, once; a deleted group is not brought back
     const tv = data.travelers || {};
     if ((!data.groups || !Object.keys(data.groups).length) && tv.pati && tv.jula) data.groups = { 'pati-jula': { name: '', members: ['pati', 'jula'], avatar: '💞', color: 'pink', order: 0, createdAt: Date.now() } };
@@ -2268,28 +2265,32 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) loca
 
 /* ===== web version: the owner's OneDrive through Microsoft Graph; sign-in with PKCE, no libraries ===== */
 const MS_AUTH = 'https://login.microsoftonline.com/consumers/oauth2/v2.0';
-const MS_SCOPE = 'openid profile offline_access User.Read Files.ReadWrite.All';
+/* own map: only the app's folder (OneDrive/Aplikacje/<app name>); someone else's map opened from a link: files shared with you */
+const MS_SCOPES = { own: 'openid profile offline_access User.Read Files.ReadWrite.AppFolder', guest: 'openid profile offline_access User.Read Files.ReadWrite' };
+let msMode = 'own';
+const msKey = (m = msMode) => 'mapa-ms-' + m;
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const msRedirect = () => location.origin + location.pathname.replace(/index\.html$/, '');
 const b64url = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } };
-let cloud = null, cloudUser = null; // cloud = { d: drive id, f: folder id, name, etag, base, prevText }
+let cloud = null, cloudUser = null, cloudOwn = null; // cloud = { d: drive id, f: folder id, root: Graph path, own, name, etag, base, prevText }
 async function msLogin() {
   const ver = b64url(crypto.getRandomValues(new Uint8Array(32)));
   const chal = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ver)));
   const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
-  try { sessionStorage.setItem('mapa-pkce', JSON.stringify({ ver, state, back: location.search })); } catch (e) { /* ignore */ }
-  const q = new URLSearchParams({ client_id: KONF.msClientId, response_type: 'code', redirect_uri: msRedirect(), scope: MS_SCOPE, code_challenge: chal, code_challenge_method: 'S256', state, response_mode: 'query', prompt: 'select_account' });
+  try { sessionStorage.setItem('mapa-pkce', JSON.stringify({ ver, state, back: location.search, mode: msMode })); } catch (e) { /* ignore */ }
+  const q = new URLSearchParams({ client_id: KONF.msClientId, response_type: 'code', redirect_uri: msRedirect(), scope: MS_SCOPES[msMode], code_challenge: chal, code_challenge_method: 'S256', state, response_mode: 'query', prompt: 'select_account' });
   location.assign(`${MS_AUTH}/authorize?${q}`);
 }
-async function msTokenCall(params) {
-  const r = await fetch(`${MS_AUTH}/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(Object.assign({ client_id: KONF.msClientId, scope: MS_SCOPE }, params)) });
+async function msTokenCall(params, mode = msMode) {
+  const r = await fetch(`${MS_AUTH}/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(Object.assign({ client_id: KONF.msClientId, scope: MS_SCOPES[mode] }, params)) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.access_token) throw Object.assign(new Error('token'), { detail: j.error_description || r.status });
-  lsSet('mapa-ms', { at: j.access_token, rt: j.refresh_token || (lsGet('mapa-ms') || {}).rt, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 });
+  lsSet(msKey(mode), { at: j.access_token, rt: j.refresh_token || (lsGet(msKey(mode)) || {}).rt, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 });
 }
+const msLogout = () => { for (const m of ['own', 'guest']) lsSet(msKey(m), null); lsSet('mapa-ms', null); };
 async function msHandleRedirect() {
   const u = new URL(location.href);
   const code = u.searchParams.get('code'), err = u.searchParams.get('error');
@@ -2299,16 +2300,16 @@ async function msHandleRedirect() {
   history.replaceState(null, '', msRedirect() + ((pk && pk.back) || ''));
   if (err) { if (err !== 'access_denied') toast('Logowanie się nie udało. Spróbuj jeszcze raz.'); return; }
   if (!pk || pk.state !== u.searchParams.get('state')) return;
-  try { await msTokenCall({ grant_type: 'authorization_code', code, redirect_uri: msRedirect(), code_verifier: pk.ver }); }
+  try { await msTokenCall({ grant_type: 'authorization_code', code, redirect_uri: msRedirect(), code_verifier: pk.ver }, pk.mode === 'guest' ? 'guest' : 'own'); }
   catch (e) { console.warn(e); toast('Logowanie się nie udało. Spróbuj jeszcze raz.'); }
 }
 async function msToken(force) {
-  const t = lsGet('mapa-ms');
+  const t = lsGet(msKey());
   if (!t) return null;
   if (!force && t.exp > Date.now()) return t.at;
   if (!t.rt) return null;
-  try { await msTokenCall({ grant_type: 'refresh_token', refresh_token: t.rt }); return (lsGet('mapa-ms') || {}).at || null; }
-  catch (e) { lsSet('mapa-ms', null); return null; }
+  try { await msTokenCall({ grant_type: 'refresh_token', refresh_token: t.rt }); return (lsGet(msKey()) || {}).at || null; }
+  catch (e) { lsSet(msKey(), null); return null; }
 }
 async function gfetch(path, opts = {}) {
   let tok = await msToken();
@@ -2319,7 +2320,9 @@ async function gfetch(path, opts = {}) {
   for (let i = 0; i < 3 && (r.status === 429 || r.status === 503); i++) { await sleep(1000 * (+r.headers.get('Retry-After') || 2 + i * 2)); r = await go(tok); }
   return r;
 }
-const cpath = (sub, c = cloud) => `/drives/${c.d}/items/${c.f}:/${sub.split('/').map(encodeURIComponent).join('/')}:`;
+const APPROOT = '/me/drive/special/approot';
+const croot = fo => (fo.own ? APPROOT : `/drives/${fo.d}/items/${fo.f}`);
+const cpath = (sub, c = cloud) => `${c.root}:/${sub.split('/').map(encodeURIComponent).join('/')}:`;
 async function cloudRead() {
   const r = await gfetch(cpath('dane/dane.json'));
   if (r.status === 404) return null;
@@ -2440,25 +2443,43 @@ async function cloudPoll() { // other people's changes appear without reloading
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && cloud) cloudPoll(); });
 async function cloudStart() {
+  lsSet('mapa-chmura-folder', null); lsSet('mapa-ms', null); // before 1.13: a folder picked from the whole OneDrive
+  const u0 = new URL(location.href);
+  if (!u0.searchParams.get('code')) { const d = u0.searchParams.get('d'), f = u0.searchParams.get('f'); if (d && f) lsSet('mapa-chmura-gosc', { d, f }); }
+  const g0 = lsGet('mapa-chmura-gosc');
+  msMode = g0 ? 'guest' : 'own';
   await msHandleRedirect();
   const u = new URL(location.href), d = u.searchParams.get('d'), f = u.searchParams.get('f');
-  if (d && f) { lsSet('mapa-chmura-folder', { d, f }); history.replaceState(null, '', msRedirect()); }
+  if (d && f) { lsSet('mapa-chmura-gosc', { d, f }); history.replaceState(null, '', msRedirect()); }
+  const g = lsGet('mapa-chmura-gosc');
+  msMode = g ? 'guest' : 'own';
   if (!(await msToken())) { S.dbState = 'login'; S.sheetOpen = true; render(); return; }
   try {
-    const [me, drv] = await Promise.all([
-      gfetch('/me?$select=displayName,userPrincipalName').then(r => (r.ok ? r.json() : {})),
-      gfetch('/me/drive?$select=id').then(r => (r.ok ? r.json() : {}))]);
-    cloudUser = { name: me.displayName || me.userPrincipalName || '', drive: String(drv.id || '').toLowerCase() };
+    const me = await gfetch('/me?$select=displayName,userPrincipalName').then(r => (r.ok ? r.json() : {}));
+    cloudUser = { name: me.displayName || me.userPrincipalName || '' };
   } catch (e) { if (e.code === 'auth') { S.dbState = 'login'; render(); return; } }
-  const fo = lsGet('mapa-chmura-folder');
-  if (!fo) { S.dbState = 'pick'; S.sheetOpen = true; render(); openCloudPicker(); return; }
-  await cloudOpen(fo);
+  if (g) { await cloudOpen({ d: g.d, f: g.f, own: false }); return; }
+  S.dbState = 'loading'; render();
+  try { // own map: the app's folder, created by OneDrive on first use
+    const r = await gfetch(APPROOT + '?$select=id,name,parentReference');
+    if (!r.ok) throw new Error('approot ' + r.status);
+    const it = await r.json();
+    cloudOwn = { d: it.parentReference && it.parentReference.driveId, f: it.id, own: true, name: it.name || 'Mapa podróży' };
+    const has = await gfetch(APPROOT + ':/dane/dane.json:?$select=id');
+    if (has.status === 404) { S.dbState = 'empty'; S.sheetOpen = true; render(); return; }
+    await cloudOpen(cloudOwn);
+  } catch (e) {
+    console.warn(e);
+    if (e.code === 'auth') S.dbState = 'login';
+    else { S.dbState = 'offline'; toast('Nie mogę połączyć się z OneDrive. Sprawdź internet i odśwież stronę.'); }
+    render();
+  }
 }
 async function cloudOpen(fo) {
   S.dbState = 'loading'; render();
-  cloud = { d: fo.d, f: fo.f, name: '', etag: null, base: null, prevText: '' };
+  cloud = { d: fo.d, f: fo.f, root: croot(fo), own: !!fo.own, name: fo.name || '', etag: null, base: null, prevText: '' };
   try {
-    const r = await gfetch(`/drives/${fo.d}/items/${fo.f}?$select=id,name`);
+    const r = await gfetch(`${cloud.root}?$select=id,name`);
     if (r.status === 404 || r.status === 403) { cloud = null; S.dbState = 'noaccess'; S.sheetOpen = true; render(); return; }
     if (!r.ok) throw new Error('folder ' + r.status);
     cloud.name = (await r.json()).name || 'mapa';
@@ -2469,7 +2490,6 @@ async function cloudOpen(fo) {
     folder = folderDb(data); db = folder; assets = cloudAssets;
     S.canWrite = true; S.canUpload = true;
     Object.assign(S.lf, { state: 'edit', saving: false, dirty: false, savedAt: null, error: '', resumable: false, name: cloud.name });
-    lsSet('mapa-chmura-folder', { d: fo.d, f: fo.f });
     cloudListPhotos();
     subscribe();
     if (seeded) queueSave();
@@ -2484,70 +2504,100 @@ async function cloudOpen(fo) {
   }
 }
 const cloudLink = () => `${msRedirect()}?d=${encodeURIComponent(cloud.d)}&f=${encodeURIComponent(cloud.f)}`;
-function openCloudPicker() {
-  openModal((md, close) => {
-    const stack = [];
-    let tab = 'mine';
-    const list = h('div', { class: 'cplist' }), crumbs = h('div', { class: 'cpcrumb' });
-    const chooseBtn = h('button', { type: 'button', class: 'btn primary', disabled: true, onclick: () => choose() }, ic('check', 18), 'Wybierz ten folder');
-    const tabBox = h('div', { class: 'who', role: 'group', 'aria-label': 'Gdzie szukać' });
-    const paintTabs = () => tabBox.replaceChildren(...[['mine', 'Mój OneDrive'], ['shared', 'Udostępnione mi']].map(([k, l]) =>
-      h('button', { type: 'button', class: 'who-btn', style: 'padding-left:12px', 'aria-pressed': String(tab === k), onclick: () => { tab = k; stack.length = 0; paintTabs(); load(); } }, l)));
-    async function load() {
-      const cur = stack[stack.length - 1];
-      list.replaceChildren(h('p', { class: 'hint' }, 'Wczytuję foldery…'));
-      crumbs.replaceChildren(...(stack.length ? [h('button', { type: 'button', class: 'btn small ghost', onclick: () => { stack.pop(); load(); } }, ic('left', 16), 'Wstecz'), h('b', null, stack.map(x => x.name).join(' / '))] : []));
-      chooseBtn.disabled = !cur;
-      const url = cur ? `/drives/${cur.d}/items/${cur.id}/children?$top=200` : (tab === 'mine' ? '/me/drive/root/children?$top=200' : '/me/drive/sharedWithMe');
-      try {
-        const r = await gfetch(url);
-        const j = await r.json();
-        const items = (j.value || []).map(it => (it.remoteItem
-          ? { d: it.remoteItem.parentReference && it.remoteItem.parentReference.driveId, id: it.remoteItem.id, name: it.name || it.remoteItem.name, folder: !!(it.remoteItem.folder || it.folder) }
-          : { d: (it.parentReference && it.parentReference.driveId) || (cur && cur.d), id: it.id, name: it.name, folder: !!it.folder }))
-          .filter(x => x.folder && x.d && x.id).sort((a, b) => String(a.name).localeCompare(b.name, 'pl'));
-        list.replaceChildren(...(items.length ? items.map(x => h('button', { type: 'button', class: 'cpitem', onclick: () => { stack.push(x); load(); } }, h('span', { html: icon('book', 18) }), x.name, h('span', { class: 'spacer' }), h('span', { html: icon('right', 16) })))
-          : [h('p', { class: 'hint' }, cur ? 'Tu nie ma już folderów. Jeśli to folder mapy, kliknij „Wybierz ten folder”.' : (tab === 'shared' ? 'Nikt nie udostępnił Ci jeszcze folderu.' : 'Brak folderów.'))]));
-      } catch (e) { list.replaceChildren(h('p', { class: 'err' }, 'Nie mogę wczytać folderów z OneDrive.')); }
-    }
-    async function choose() {
-      const cur = stack[stack.length - 1];
-      if (!cur) return;
-      chooseBtn.disabled = true;
-      let has = false;
-      try { has = (await gfetch(cpath('dane/dane.json', { d: cur.d, f: cur.id }))).ok; } catch (e) { has = false; }
-      if (!has && !await confirmDialog(`W folderze „${cur.name}” nie ma pliku dane/dane.json. Zacząć tu nową, pustą mapę?`, 'Zacznij')) { chooseBtn.disabled = false; return; }
-      close();
-      cloudOpen({ d: cur.d, f: cur.id });
-    }
-    paintTabs();
-    md.append(h('h3', null, 'Folder mapy na OneDrive'),
-      h('p', { class: 'hint' }, 'Wybierz folder, w którym leży mapa (z podfolderami dane i zdjecia). Jeśli ktoś udostępnił Ci swoją mapę, szukaj w „Udostępnione mi”.'),
-      tabBox, crumbs, list,
-      h('div', { class: 'acts' }, h('span', { class: 'spacer' }), h('button', { type: 'button', class: 'btn', onclick: close }, 'Anuluj'), chooseBtn));
-    load();
-  }, 'passport');
+async function cloudMkdir(parent, name) { // folder inside the map; already existing is fine
+  const r = await gfetch(parent + '/children', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }) });
+  if (!r.ok && r.status !== 409) throw new Error('mkdir ' + r.status);
 }
+function newMapModal() {
+  openModal((md, close) => {
+    const home = Object.assign({}, HOME_DEFAULT);
+    const coordsTxt = h('span', null, `${home.lat.toFixed(3)}°, ${home.lng.toFixed(3)}°`);
+    const usePick = c => { home.lat = c.lat; home.lng = c.lng; coordsTxt.textContent = `${c.lat.toFixed(3)}°, ${c.lng.toFixed(3)}°`; };
+    const homeFld = cityField('f-nm-home', 'Miasto domowe', home.name, usePick, 'Stąd balonik wylatuje i tu wraca.', txt => { const c = findCity(txt); if (c) usePick(c); });
+    const homeIn = homeFld.querySelector('input');
+    let avatar = AVATARS[0];
+    const avBox = h('div', { class: 'moods', role: 'group', 'aria-label': 'Twój awatar' });
+    const paintAv = () => avBox.replaceChildren(...AVATARS.map(x => h('button', { type: 'button', class: 'mood-btn', 'aria-pressed': String(x === avatar), onclick: () => { avatar = x; paintAv(); } }, x)));
+    paintAv();
+    const err = h('p', { class: 'err', hidden: true });
+    const go = h('button', { type: 'submit', class: 'btn primary' }, ic('plus', 18), 'Utwórz mapę');
+    md.append(h('form', { onsubmit: async e => {
+      e.preventDefault();
+      const name = $('#f-nm-name', md).value.trim();
+      if (!name) { err.textContent = 'Wpisz swoje imię.'; err.hidden = false; return; }
+      go.disabled = true; err.hidden = true;
+      const id = (norm(name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 20) || 'ja') + '-' + uid().slice(-4);
+      const data = {
+        zapisano: new Date().toISOString(),
+        home: { name: homeIn.value.trim() || home.name, lat: +home.lat, lng: +home.lng },
+        meta: { profile: 1, grupy: 1 },
+        trips: {}, places: {}, groups: {},
+        travelers: { [id]: { name, me: true, avatar, color: 'lav', order: 0, createdAt: Date.now() } }
+      };
+      try {
+        await cloudMkdir(APPROOT, 'dane'); await cloudMkdir(APPROOT, 'zdjecia'); await cloudMkdir(APPROOT + ':/dane:', 'kopie');
+        const json = JSON.stringify(data, null, 2) + '\n';
+        const r = await gfetch(APPROOT + ':/dane/dane.json:/content', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: json });
+        if (!r.ok) throw new Error('create ' + r.status);
+        await gfetch(APPROOT + ':/dane/dane.js:/content', { method: 'PUT', headers: { 'Content-Type': 'text/javascript' }, body: '// Dane „Mapy naszych podróży”. Zapisano: ' + data.zapisano + '\nwindow.MAPA_DANE = ' + json.trim() + ';\n' }).catch(() => {});
+        close();
+        toast('Mapa gotowa! Dodaj pierwszy wyjazd.');
+        await cloudOpen(cloudOwn);
+      } catch (x) { console.warn(x); go.disabled = false; err.textContent = 'Nie udało się założyć mapy na OneDrive. Spróbuj jeszcze raz.'; err.hidden = false; }
+    } },
+      h('h3', null, 'Twoja mapa'),
+      h('p', { class: 'hint', style: 'margin-top:-4px' }, `Założę na Twoim OneDrive folder „Aplikacje/${(cloudOwn && cloudOwn.name) || 'Mapa podróży'}” z podfolderami dane i zdjecia. Ta strona widzi tylko ten jeden folder.`),
+      fld('f-nm-name', 'Twoje imię', inp('f-nm-name', cloudUser && cloudUser.name ? String(cloudUser.name).split(' ')[0] : '', { maxlength: 30, autocomplete: 'off' })),
+      h('div', { class: 'fld' }, h('span', { class: 'lbl' }, 'Twój awatar'), avBox),
+      homeFld,
+      h('div', { class: 'coords' }, ic('pin', 18), coordsTxt),
+      err,
+      h('div', { class: 'acts' }, h('span', { class: 'spacer' }), h('button', { type: 'button', class: 'btn', onclick: close }, 'Anuluj'), go)));
+  });
+}
+function linkModal() {
+  openModal((md, close) => {
+    const err = h('p', { class: 'err', hidden: true });
+    md.append(h('form', { onsubmit: e => {
+      e.preventDefault();
+      let u = null;
+      try { u = new URL($('#f-link', md).value.trim()); } catch (x) { u = null; }
+      const d = u && u.searchParams.get('d'), f = u && u.searchParams.get('f');
+      if (!d || !f) { err.textContent = 'To nie wygląda na link do mapy. Poproś o link z menu ⋯ na mapie tej osoby.'; err.hidden = false; return; }
+      lsSet('mapa-chmura-gosc', { d, f }); close(); location.reload();
+    } },
+      h('h3', null, 'Cudza mapa'),
+      h('p', { class: 'hint', style: 'margin-top:-4px' }, 'Wklej link, który dostałaś od właścicielki mapy. Najpierw musi udostępnić Ci jej folder na OneDrive.'),
+      fld('f-link', 'Link do mapy', inp('f-link', '', { autocomplete: 'off', placeholder: 'https://…?d=…&f=…' })),
+      err,
+      h('div', { class: 'acts' }, h('span', { class: 'spacer' }), h('button', { type: 'button', class: 'btn', onclick: close }, 'Anuluj'), h('button', { type: 'submit', class: 'btn primary' }, 'Otwórz'))));
+  });
+}
+const backToOwn = () => { lsSet('mapa-chmura-gosc', null); location.assign(msRedirect()); };
 function cloudMenu() {
   openModal((md, close) => {
     const link = cloudLink();
-    md.append(h('h3', null, 'Mapa na OneDrive'),
-      h('p', { style: 'margin:0 0 12px' }, `Folder „${cloud.name}”`, cloudUser && cloudUser.name ? ` · zalogowano: ${cloudUser.name}` : ''),
+    md.append(h('h3', null, cloud.own ? 'Twoja mapa na OneDrive' : 'Cudza mapa na OneDrive'),
+      h('p', { style: 'margin:0 0 12px' }, cloud.own ? `Folder „Aplikacje/${cloud.name}”` : `Folder „${cloud.name}” udostępniony Tobie`, cloudUser && cloudUser.name ? ` · zalogowano: ${cloudUser.name}` : ''),
       h('div', { class: 'fld' }, h('span', { class: 'lbl' }, 'Link dla innych osób'),
         h('input', { readonly: true, value: link, onfocus: e => e.target.select(), 'aria-label': 'Link do mapy' }),
-        h('p', { class: 'hint' }, 'Najpierw udostępnij ten folder na OneDrive tej osobie z prawem edycji (Udostępnij → wpisz jej adres → „Może edytować”). Potem wyślij jej link; zaloguje się swoim kontem Microsoft i zobaczy tę samą mapę.')),
+        h('p', { class: 'hint' }, cloud.own
+          ? `Najpierw udostępnij folder „Aplikacje/${cloud.name}” na OneDrive tej osobie z prawem edycji (Udostępnij → jej adres → „Może edytować”). Potem wyślij jej link; zaloguje się swoim kontem Microsoft i zobaczy tę samą mapę.`
+          : 'To link do tej mapy. Działa dla osób, którym właścicielka udostępniła jej folder.')),
       h('div', { class: 'acts' },
-        h('button', { type: 'button', class: 'btn ghost', onclick: () => { lsSet('mapa-ms', null); location.reload(); } }, 'Wyloguj'),
-        h('button', { type: 'button', class: 'btn', onclick: () => { lsSet('mapa-chmura-folder', null); location.reload(); } }, 'Zmień folder'),
+        h('button', { type: 'button', class: 'btn ghost', onclick: () => { msLogout(); location.reload(); } }, 'Wyloguj'),
+        cloud.own ? null : h('button', { type: 'button', class: 'btn', onclick: backToOwn }, 'Moja mapa'),
         h('span', { class: 'spacer' }),
         h('button', { type: 'button', class: 'btn primary', onclick: async () => { try { await navigator.clipboard.writeText(link); toast('Link skopiowany.'); } catch (e) { toast('Zaznacz link i skopiuj go ręcznie.'); } } }, ic('link', 18), 'Kopiuj link')));
   });
 }
 function cloudGateView() {
   const T = {
-    login: ['Zaloguj się', 'Zdjęcia i wspomnienia leżą na OneDrive właścicielki mapy, a ta strona tylko je pokazuje. Zaloguj się kontem Microsoft, któremu udostępniono folder mapy.'],
-    pick: ['Wybierz folder', 'Wskaż folder z mapą na swoim OneDrive albo w „Udostępnione mi”.'],
-    noaccess: ['Brak dostępu', 'To konto nie ma dostępu do folderu mapy. Poproś właścicielkę, żeby udostępniła Ci folder na OneDrive z prawem edycji, albo zaloguj się innym kontem.']
+    login: lsGet('mapa-chmura-gosc')
+      ? ['Zaloguj się', 'Ktoś zaprosił Cię do swojej mapy. Zdjęcia i wspomnienia leżą na jego OneDrive; zaloguj się kontem Microsoft, któremu udostępniono folder mapy.']
+      : ['Zaloguj się', 'Mapa zapisuje wyjazdy, zdjęcia i wspomnienia na Twoim OneDrive, w jednym folderze „Aplikacje/Mapa podróży”. Ta strona nie widzi żadnych innych Twoich plików.'],
+    empty: ['Załóż swoją mapę', `Na Twoim OneDrive jest już folder „Aplikacje/${(cloudOwn && cloudOwn.name) || 'Mapa podróży'}”, ale nie ma w nim jeszcze mapy. Załóż nową albo, jeśli masz mapę z laptopa, przenieś do tego folderu jej zawartość (dane, zdjecia i resztę plików) i odśwież stronę.`],
+    noaccess: ['Brak dostępu', 'To konto nie ma dostępu do tej mapy. Poproś właścicielkę, żeby udostępniła Ci jej folder na OneDrive z prawem edycji, albo zaloguj się innym kontem.']
   }[S.dbState] || ['', ''];
   return h('div', null,
     h('div', { class: 'eyebrow' }, 'Mapa naszych podróży · OneDrive'),
@@ -2555,9 +2605,11 @@ function cloudGateView() {
     h('p', null, T[1]),
     h('div', { class: 'cta', style: 'display:flex;gap:8px;flex-wrap:wrap' },
       S.dbState === 'login' ? h('button', { class: 'btn primary', onclick: msLogin }, 'Zaloguj przez Microsoft') : null,
-      S.dbState === 'pick' ? h('button', { class: 'btn primary', onclick: openCloudPicker }, 'Wybierz folder') : null,
-      S.dbState === 'noaccess' ? h('button', { class: 'btn', onclick: () => { lsSet('mapa-chmura-folder', null); location.reload(); } }, 'Wybierz inny folder') : null,
-      S.dbState === 'noaccess' ? h('button', { class: 'btn primary', onclick: () => { lsSet('mapa-ms', null); msLogin(); } }, 'Zaloguj innym kontem') : null));
+      S.dbState === 'empty' ? h('button', { class: 'btn primary', onclick: newMapModal }, ic('plus', 18), 'Załóż mapę') : null,
+      S.dbState === 'empty' ? h('button', { class: 'btn', onclick: () => location.reload() }, 'Odśwież') : null,
+      S.dbState === 'empty' || (S.dbState === 'login' && !lsGet('mapa-chmura-gosc')) ? h('button', { class: 'btn ghost', onclick: linkModal }, ic('link', 18), 'Mam link do cudzej mapy') : null,
+      S.dbState === 'noaccess' ? h('button', { class: 'btn primary', onclick: () => { msLogout(); msLogin(); } }, 'Zaloguj innym kontem') : null,
+      S.dbState === 'noaccess' || (S.dbState === 'login' && lsGet('mapa-chmura-gosc')) ? h('button', { class: 'btn', onclick: backToOwn }, 'Moja mapa') : null));
 }
 
 async function connect() {
@@ -2697,7 +2749,7 @@ function renderStatusBox() {
         L.error === 'zaloguj się ponownie' ? h('button', { class: 'btn small', onclick: msLogin }, 'Zaloguj') : null,
         h('button', { class: 'btn small icon ghost', 'aria-label': 'Mapa na OneDrive: link i konto', onclick: cloudMenu }, ic('more', 18))));
     } else if (S.dbState === 'login') sb.append(h('div', { class: 'status' }, 'Zaloguj się kontem Microsoft', h('button', { class: 'btn small primary', onclick: msLogin }, 'Zaloguj')));
-    else if (S.dbState === 'pick') sb.append(h('div', { class: 'status' }, 'Wybierz folder mapy', h('button', { class: 'btn small primary', onclick: openCloudPicker }, 'Wybierz')));
+    else if (S.dbState === 'empty') sb.append(h('div', { class: 'status' }, 'Nie masz jeszcze mapy', h('button', { class: 'btn small primary', onclick: newMapModal }, 'Załóż')));
     else if (S.dbState === 'noaccess') sb.append(h('div', { class: 'status bad' }, 'Brak dostępu do folderu mapy'));
     else if (S.dbState === 'loading') sb.append(h('div', { class: 'status' }, 'Wczytuję mapę z OneDrive…'));
     else if (S.dbState === 'offline') sb.append(h('div', { class: 'status' }, 'Brak połączenia z OneDrive. Odśwież stronę.'));
@@ -2742,7 +2794,7 @@ function renderPanel() {
   const keep = key === lastPanelKey ? body.scrollTop : 0;
   lastPanelKey = key;
   body.replaceChildren();
-  if (S.dbState !== 'ready') { body.append(['login', 'pick', 'noaccess'].includes(S.dbState) ? cloudGateView() : loadingView()); return; }
+  if (S.dbState !== 'ready') { body.append(['login', 'empty', 'noaccess'].includes(S.dbState) ? cloudGateView() : loadingView()); return; }
   if (S.placeId && S.places[S.placeId]) body.append(placeView(S.places[S.placeId]));
   else if (S.view === 'countries') { const g = groupByKey(S.countryKey); body.append(g ? countryView(g) : countriesView()); }
   else if (S.tripId && S.trips[S.tripId]) body.append(tripView(S.trips[S.tripId]));
@@ -2897,7 +2949,7 @@ function countriesView() {
   const places = vplaces();
   const years = [...new Set(places.map(placeYear).filter(Boolean))].sort();
   const photos = places.reduce((n, p) => n + photosOf(p).length, 0);
-  wrap.append(h('div', { class: 'eyebrow' }, perspName() ? `${isGroupKey(S.persp) ? 'Wspólne kraje' : 'Odwiedzone kraje'} · ${perspName()}` : 'Odwiedzone kraje'),
+  add(wrap, [h('div', { class: 'eyebrow' }, perspName() ? `${isGroupKey(S.persp) ? 'Wspólne kraje' : 'Odwiedzone kraje'} · ${perspName()}` : 'Odwiedzone kraje'),
     h('h2', { class: 'bigt' }, GROUPS.length ? nPl(GROUPS.length, 'kraj', 'kraje', 'krajów') : 'Mapa czeka'),
     h('div', { class: 'meta' },
       places.length ? h('span', null, ic('pin', 16), nPl(places.length, 'miasto', 'miasta', 'miast')) : null,
@@ -2907,7 +2959,7 @@ function countriesView() {
       const pend = GROUPS.reduce((n, g) => n + badgeOf(g).pending, 0);
       return pend ? `Masz ${nPl(pend, 'pieczątkę', 'pieczątki', 'pieczątek')} do odebrania: wyląduj balonikiem w mieście z różowym +1. Kliknij kraj, żeby zobaczyć jego odznakę.` : 'Kliknij kolorowy kraj na mapie albo wybierz go z listy.';
     })()) : null,
-    GROUPS.length ? yearLegend(places) : null);
+    GROUPS.length ? yearLegend(places) : null]);
   if (!GROUPS.length) {
     wrap.append(h('div', { class: 'empty', style: 'margin-top:14px' }, h('span', { html: icon('globe', 36) }),
       h('p', null, S.canWrite ? 'Dodaj pierwszy wyjazd i miasta, a kraje same się pokolorują.' : 'Na tej mapie nie ma jeszcze odwiedzonych krajów.')));
