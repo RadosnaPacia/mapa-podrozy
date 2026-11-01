@@ -420,6 +420,7 @@ body.panel-hidden .panelToggle svg{transform:scaleX(-1)}
 .ctile span{font-size:12px;font-weight:700;color:var(--ink-2)}
 .ctile.wide{width:100%;margin-top:6px}
 .agrid{display:grid;gap:8px}
+.acard .achimg,.acard .achsvg{flex:none}
 .acard{display:flex;gap:12px;align-items:center;background:var(--paper);border-radius:16px;padding:8px 12px 8px 8px}
 .acard .abody{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
 .acard b{font:800 17px var(--font-display)}
@@ -1071,18 +1072,12 @@ function achSvg(r, size = 72) {
     sv('text', { x: 50, y: 66, 'text-anchor': 'middle', 'font-size': 34 }, r.a.emoji),
     ...stars);
 }
-function achVisual(r, size = 72) {
-  const id = r.a.id;
-  if (!achOk.has(id)) {
-    achOk.set(id, 'probing');
-    const im = new Image();
-    im.onload = () => { achOk.set(id, true); scheduleRender(); };
-    im.onerror = () => achOk.set(id, false);
-    im.src = achSrc(id, 1);
-  }
-  if (achOk.get(id) !== true) return achSvg(r, size);
-  const im = h('img', { class: 'badgeimg achimg' + (r.tier ? '' : ' locked'), src: achSrc(id, Math.max(1, r.tier)), alt: `${r.a.name}${r.tier ? '' : ' (jeszcze nie zdobyta)'}`, onerror: hideBroken });
+function achVisual(r, size = 72) { // the picture right away (modals are built once, they do not wait for a check); drawn emblem if the file is missing
+  const src = achSrc(r.a.id, Math.max(1, r.tier));
+  if (achOk.get(src) === false) return achSvg(r, size);
+  const im = h('img', { class: 'badgeimg achimg' + (r.tier ? '' : ' locked'), src, alt: `${r.a.name}${r.tier ? '' : ' (jeszcze nie zdobyta)'}` });
   im.style.width = im.style.height = size + 'px';
+  im.onerror = () => { achOk.set(src, false); if (im.isConnected) im.replaceWith(achSvg(r, size)); else im.style.display = 'none'; };
   return im;
 }
 const achStars = r => (r.max === 1 ? (r.tier ? '★' : '☆') : starStr(r.tier));
