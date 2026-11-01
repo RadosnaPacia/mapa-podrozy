@@ -1,0 +1,18 @@
+{
+  "name": "mapa-naszych-podrozy",
+  "version": "1.12.0",
+  "private": true,
+  "type": "module",
+  "description": "Pastelowa mapa podróży: kraje, wyjazdy, zdjęcia, wspomnienia i tipy na powrót.",
+  "scripts": {
+    "build": "node build.mjs",
+    "geo": "node gen.mjs"
+  },
+  "devDependencies": {
+    "d3-geo": "^3.1.1",
+    "i18n-iso-countries": "^7.11.3",
+    "topojson-client": "^3.1.0",
+    "topojson-simplify": "^3.0.3",
+    "world-atlas": "^2.0.2"
+  }
+}
