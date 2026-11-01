@@ -1,0 +1,11 @@
+# Prywatne: dane i zdjęcia żyją tylko na OneDrive właścicielki mapy
+dane/
+zdjecia/
+# Dokumentacja z opisem wyjazdów zostaje w prywatnym folderze
+docs/
+dokumentacja.html
+# Pliki robocze
+*.zip
+node_modules/
+zrodla/dist/
+.DS_Store
