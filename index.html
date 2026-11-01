@@ -188,6 +188,9 @@ body.panel-hidden .panelToggle svg{transform:scaleX(-1)}
 .progress{height:10px;border-radius:9px;background:var(--line);overflow:hidden;margin:-4px 0 14px}
 .progress span{display:block;height:100%;background:var(--accent-deep);border-radius:9px;transition:width .3s}
 .progress-l{font-size:13px;color:var(--ink-2);margin:0 0 6px;font-weight:600}
+.progress.waiting span{animation:upwait 1.4s ease-in-out infinite}
+@keyframes upwait{50%{opacity:.45}}
+.upfail{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-6px 0 14px;font-size:13px;font-weight:700}
 .grid{columns:2 140px;column-gap:12px}
 .polaroid{display:block;width:100%;break-inside:avoid;margin:0 0 14px;padding:7px 7px 9px;border:0;background:#fff;border-radius:10px;box-shadow:0 3px 10px rgba(79,72,107,.14);cursor:zoom-in;transform:rotate(var(--r,0deg));transition:transform .2s;position:relative;text-align:left}
 .polaroid:hover{transform:rotate(0) scale(1.03);z-index:1}
@@ -2258,7 +2261,7 @@ const folderAssets = {
   },
   async list() { return { assets: [], usage: {} }; }
 };
-window.addEventListener('beforeunload', e => { if ((LOCAL || CLOUD) && (S.lf.dirty || S.lf.saving)) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', e => { if ((LOCAL || CLOUD) && (S.lf.dirty || S.lf.saving || UPQ.items.some(x => !x.fail))) { e.preventDefault(); e.returnValue = ''; } });
 document.addEventListener('visibilitychange', () => { if (document.hidden && (LOCAL || CLOUD) && S.lf.dirty) persist(); });
 /* laptop: pick up changes that OneDrive synced into the folder (made on the web version or another computer) */
 async function localPoll() {
@@ -2300,8 +2303,23 @@ async function msLogin() {
   const q = new URLSearchParams({ client_id: KONF.msClientId, response_type: 'code', redirect_uri: msRedirect(), scope: MS_SCOPES[msMode], code_challenge: chal, code_challenge_method: 'S256', state, response_mode: 'query', prompt: 'select_account' });
   location.assign(`${MS_AUTH}/authorize?${q}`);
 }
+/* flaky connections (a train, a tunnel): every request has a time limit, and a lost connection is told apart from a real refusal */
+const NETX = () => window.__netScale || 1; // tests shorten the waits
+const isNet = e => !!e && (e.name === 'TypeError' || e.name === 'AbortError' || e.code === 'net' || e.code === 'timeout');
+function fetchT(url, opts = {}, ms = 30000) { // fetch that gives up after ms (a stalled upload would otherwise hang for many minutes)
+  const ac = new AbortController(), tm = setTimeout(() => ac.abort(), ms * NETX());
+  return fetch(url, Object.assign({}, opts, { signal: ac.signal })).finally(() => clearTimeout(tm));
+}
+const bodySize = b => (!b ? 0 : typeof b === 'string' ? b.length : b.size || b.byteLength || 0);
+let netWake = null;
+function waitNet(ms) { // wait ms, or less if the phone gets its connection back / the page is shown again
+  return new Promise(res => {
+    const done = () => { clearTimeout(t); window.removeEventListener('online', done); if (netWake === done) netWake = null; res(); };
+    const t = setTimeout(done, ms * NETX()); window.addEventListener('online', done); netWake = done;
+  });
+}
 async function msTokenCall(params, mode = msMode) {
-  const r = await fetch(`${MS_AUTH}/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(Object.assign({ client_id: KONF.msClientId, scope: MS_SCOPES[mode] }, params)) });
+  const r = await fetchT(`${MS_AUTH}/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(Object.assign({ client_id: KONF.msClientId, scope: MS_SCOPES[mode] }, params)) }, 20000);
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.access_token) throw Object.assign(new Error('token'), { detail: j.error_description || r.status });
   lsSet(msKey(mode), { at: j.access_token, rt: j.refresh_token || (lsGet(msKey(mode)) || {}).rt, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 });
@@ -2325,12 +2343,16 @@ async function msToken(force) {
   if (!force && t.exp > Date.now()) return t.at;
   if (!t.rt) return null;
   try { await msTokenCall({ grant_type: 'refresh_token', refresh_token: t.rt }); return (lsGet(msKey()) || {}).at || null; }
-  catch (e) { lsSet(msKey(), null); return null; }
+  catch (e) {
+    if (isNet(e)) throw Object.assign(new Error('net'), { code: 'net' }); // no connection: keep the login, try again later
+    lsSet(msKey(), null); return null; // Microsoft refused the refresh: log in again
+  }
 }
 async function gfetch(path, opts = {}) {
   let tok = await msToken();
   if (!tok) throw Object.assign(new Error('auth'), { code: 'auth' });
-  const go = t => fetch(/^https?:/.test(path) ? path : GRAPH + path, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + t }, opts.headers || {}) }));
+  const ms = opts.timeout || 30000 + bodySize(opts.body) / 20; // at least ~20 KB/s: a 1 MB photo gets 80 s
+  const go = t => fetchT(/^https?:/.test(path) ? path : GRAPH + path, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + t }, opts.headers || {}) }), ms);
   let r = await go(tok);
   if (r.status === 401) { tok = await msToken(true); if (!tok) throw Object.assign(new Error('auth'), { code: 'auth' }); r = await go(tok); }
   for (let i = 0; i < 3 && (r.status === 429 || r.status === 503); i++) { await sleep(1000 * (+r.headers.get('Retry-After') || 2 + i * 2)); r = await go(tok); }
@@ -2387,7 +2409,7 @@ const cloudAssets = {
     let r = await put();
     if (!r.ok && id.includes('/') && [400, 404, 409].includes(r.status) && (await cloudEnsureFolder('zdjecia', id.split('/')[0]))) r = await put(); // miniatury was missing
     if (r.status === 403) throw Object.assign(new Error('forbidden'), { code: 'forbidden' });
-    if (!r.ok) throw new Error('upload ' + r.status);
+    if (!r.ok) throw Object.assign(new Error('upload ' + r.status), { status: r.status });
     const it = await r.json().catch(() => ({}));
     const url = URL.createObjectURL(data);
     photoUrls.set(id, url);
@@ -2405,6 +2427,7 @@ async function saveCloud() {
   if (S.lf.saving) { queueSave(); return; }
   clearTimeout(saveT);
   S.lf.saving = true; S.lf.dirty = false; renderStatusBox();
+  const sentKeys = UPQ.unsaved.splice(0); // these photos are in the data being saved now
   try {
     let data = folder.data(), json = '';
     for (let i = 0; ; i++) {
@@ -2423,15 +2446,26 @@ async function saveCloud() {
       break;
     }
     S.lf.savedAt = new Date(); S.lf.error = '';
+    if (sentKeys.length) idb('readwrite', st => sentKeys.map(k => st.delete(k)));
     cloudExtras(json, data);
   } catch (e) {
     console.warn(e);
+    UPQ.unsaved.push(...sentKeys);
     if (e.code === 'forbidden') { S.lf.error = 'tylko podgląd'; toast('To konto może tylko oglądać mapę. Poproś właścicielkę o prawo edycji folderu na OneDrive.'); }
     else if (e.code === 'auth') { S.lf.dirty = true; S.lf.error = 'zaloguj się ponownie'; }
+    else if (isNet(e) || e.status >= 500 || /save (429|5\d\d)/.test(e.message)) { // no signal: save by itself as soon as possible
+      S.lf.dirty = true; S.lf.error = 'brak internetu, zapiszę sam';
+      clearTimeout(saveRetryT); saveRetryT = setTimeout(() => { if (cloud && S.lf.dirty && !S.lf.saving) saveCloud(); }, 20000 * NETX());
+    }
     else { S.lf.dirty = true; S.lf.error = 'nie udało się zapisać'; toast('Nie udało się zapisać zmian na OneDrive. Sprawdź internet i kliknij „Zapisz ponownie”.'); }
   }
   S.lf.saving = false; renderStatusBox();
 }
+let saveRetryT = 0;
+let startRetryT = 0, netToastAt = 0;
+const toastNet = m => { if (Date.now() - netToastAt > 300000) { netToastAt = Date.now(); toast(m); } }; // at most every 5 minutes
+const cloudRetryLater = () => { clearTimeout(startRetryT); startRetryT = setTimeout(() => { if (S.dbState === 'offline' && !cloud) cloudStart(); }, 30000 * NETX()); };
+window.addEventListener('online', () => { if (cloud && S.lf.dirty && !S.lf.saving) saveCloud(); if (CLOUD && S.dbState === 'offline' && !cloud) cloudStart(); });
 async function cloudExtras(json, data) { // best effort: dane.js for the laptop preview and one backup per day
   try {
     const today = toIso(new Date());
@@ -2477,7 +2511,9 @@ async function cloudStart() {
   if (d && f) { lsSet('mapa-chmura-gosc', { d, f }); history.replaceState(null, '', msRedirect()); }
   const g = lsGet('mapa-chmura-gosc');
   msMode = g ? 'guest' : 'own';
-  if (!(await msToken())) { S.dbState = 'login'; S.sheetOpen = true; render(); return; }
+  let tok0 = null;
+  try { tok0 = await msToken(); } catch (e) { S.dbState = 'offline'; cloudRetryLater(); render(); return; } // no signal; starts again when the phone is back online
+  if (!tok0) { S.dbState = 'login'; S.sheetOpen = true; render(); return; }
   try {
     const me = await gfetch('/me?$select=displayName,userPrincipalName').then(r => (r.ok ? r.json() : {}));
     cloudUser = { name: me.displayName || me.userPrincipalName || '' };
@@ -2495,7 +2531,7 @@ async function cloudStart() {
   } catch (e) {
     console.warn(e);
     if (e.code === 'auth') S.dbState = 'login';
-    else { S.dbState = 'offline'; toast('Nie mogę połączyć się z OneDrive. Sprawdź internet i odśwież stronę.'); }
+    else { S.dbState = 'offline'; cloudRetryLater(); toastNet('Nie mogę połączyć się z OneDrive. Mapa wczyta się sama, gdy wróci internet.'); }
     render();
   }
 }
@@ -2518,12 +2554,13 @@ async function cloudOpen(fo) {
     subscribe();
     if (seeded) queueSave();
     setTimeout(syncLocalStamps, 700);
+    setTimeout(upqResume, 1500); // photos queued here before the page was closed
     cloudPoll();
   } catch (e) {
     console.warn(e);
     cloud = null;
     if (e.code === 'auth') S.dbState = 'login';
-    else { S.dbState = 'offline'; toast('Nie mogę połączyć się z OneDrive. Sprawdź internet i odśwież stronę.'); }
+    else { S.dbState = 'offline'; cloudRetryLater(); toastNet('Nie mogę połączyć się z OneDrive. Mapa wczyta się sama, gdy wróci internet.'); }
     render();
   }
 }
@@ -2805,15 +2842,18 @@ function renderStatusBox() {
     const L = S.lf;
     if (S.dbState === 'ready' && cloud) {
       const t = L.saving ? 'zapisuję…' : L.error ? L.error : L.dirty ? 'zmiany czekają na zapis' : L.savedAt ? `zapisano ${pad2(L.savedAt.getHours())}:${pad2(L.savedAt.getMinutes())}` : 'gotowe';
-      sb.append(h('div', { class: 'status ok' + (L.error ? ' bad' : '') }, ic(L.error ? 'x' : 'check', 16), `OneDrive „${L.name}” · ${t}`,
-        L.error === 'nie udało się zapisać' ? h('button', { class: 'btn small', onclick: () => saveCloud() }, 'Zapisz ponownie') : null,
+      const nq = UPQ.items.filter(x => !x.fail && x.map === upqMap()).length;
+      const q = nq ? ` · ${nPl(nq, 'zdjęcie', 'zdjęcia', 'zdjęć')} do wysłania${UPQ.note ? ` (${UPQ.note})` : ''}` : '';
+      sb.append(h('div', { class: 'status ok' + (L.error ? ' bad' : '') }, ic(L.error ? 'x' : 'check', 16), `OneDrive „${L.name}” · ${t}${q}`,
+        UPQ.note === 'zaloguj się ponownie' && L.error !== 'zaloguj się ponownie' ? h('button', { class: 'btn small', onclick: msLogin }, 'Zaloguj') : null,
+        L.error === 'nie udało się zapisać' || L.error === 'brak internetu, zapiszę sam' ? h('button', { class: 'btn small', onclick: () => saveCloud() }, 'Zapisz ponownie') : null,
         L.error === 'zaloguj się ponownie' ? h('button', { class: 'btn small', onclick: msLogin }, 'Zaloguj') : null,
         h('button', { class: 'btn small icon ghost', 'aria-label': 'Mapa na OneDrive: link i konto', onclick: cloudMenu }, ic('more', 18))));
     } else if (S.dbState === 'login') sb.append(h('div', { class: 'status' }, 'Zaloguj się kontem Microsoft', h('button', { class: 'btn small primary', onclick: msLogin }, 'Zaloguj')));
     else if (S.dbState === 'empty') sb.append(h('div', { class: 'status' }, 'Nie masz jeszcze mapy', h('button', { class: 'btn small primary', onclick: newMapModal }, 'Załóż')));
     else if (S.dbState === 'noaccess') sb.append(h('div', { class: 'status bad' }, 'Brak dostępu do folderu mapy'));
     else if (S.dbState === 'loading') sb.append(h('div', { class: 'status' }, 'Wczytuję mapę z OneDrive…'));
-    else if (S.dbState === 'offline') sb.append(h('div', { class: 'status' }, 'Brak połączenia z OneDrive. Odśwież stronę.'));
+    else if (S.dbState === 'offline') sb.append(h('div', { class: 'status' }, 'Brak połączenia z OneDrive. Mapa wczyta się sama, gdy wróci internet.'));
     return;
   }
   if (LOCAL && S.dbState === 'ready') {
@@ -3128,8 +3168,13 @@ function photosPane(p) {
   }
   const job = S.uploads[p.id];
   if (job) {
-    wrap.append(h('p', { class: 'progress-l' }, `Wgrywam zdjęcia: ${job.done} z ${job.total}${job.failed ? ` (nieudane: ${job.failed})` : ''}`),
-      h('div', { class: 'progress' }, h('span', { style: `width:${Math.round(job.done / job.total * 100)}%` })));
+    const stuck = UPQ.items.filter(x => x.placeId === p.id && x.fail).length;
+    const wait = UPQ.note && UPQ.items.some(x => x.placeId === p.id && !x.fail) ? ` · ${UPQ.note}…` : '';
+    wrap.append(h('p', { class: 'progress-l' }, `Wgrywam zdjęcia: ${job.done} z ${job.total}${job.failed ? ` (nieudane: ${job.failed})` : ''}${wait}`),
+      h('div', { class: 'progress' + (wait ? ' waiting' : '') }, h('span', { style: `width:${job.total ? Math.round(job.done / job.total * 100) : 0}%` })),
+      stuck ? h('div', { class: 'upfail' }, h('span', null, `${nPl(stuck, 'zdjęcie się nie wysłało', 'zdjęcia się nie wysłały', 'zdjęć się nie wysłało')}.`),
+        h('button', { class: 'btn small', onclick: () => upqRetry(p.id) }, ic('upload', 16), 'Ponów'),
+        h('button', { class: 'btn small ghost', onclick: () => upqSkip(p.id) }, 'Pomiń')) : null);
   }
   if (!ph.length) {
     wrap.append(h('div', { class: 'empty' }, h('span', { html: icon('camera', 36) }),
@@ -3169,37 +3214,136 @@ async function uploadFiles(placeId, files) {
   if (!assets) return toast('Wgrywanie zdjęć jest dostępne tylko dla właścicielki mapy.');
   const list = [...(files || [])].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name));
   if (!list.length) return toast('To nie wygląda na zdjęcia. Wybierz pliki JPG, PNG albo WEBP.');
-  const job = S.uploads[placeId] = { total: list.length, done: 0, failed: 0 };
+  const job = jobFor(placeId);
+  job.total += list.length; job.preparing++;
   render();
-  let ok = 0, heic = false;
-  const own = assets === folderAssets || assets === cloudAssets; // our own files get readable names; the Claude version names them itself
-  const opt = name => (own ? { type: 'image/jpeg', name } : { type: 'image/jpeg' });
-  for (const f of list) {
+  let heic = false;
+  for (const f of list) { // make the smaller copies here; sending happens in the queue, one by one
     try {
       const im = await prepImage(f);
-      const nm = photoName(placeId);
-      const a = await assets.upload(im.full, opt(nm));
-      const b = await assets.upload(im.thumb, opt(THUMBS + '/' + nm));
-      await patchPlace(placeId, d => { d.photos.push({ id: a.id, t: b.id, w: im.w, h: im.h, c: '', at: Date.now() }); if (!d.cover) d.cover = a.id; });
-      ok++;
+      await upqAdd({ placeId, name: ownFiles() ? photoName(placeId) : null, full: im.full, thumb: im.thumb, w: im.w, h: im.h, at: Date.now(), st: 0 });
     } catch (e) {
-      job.failed++;
+      console.warn('prepare failed', e);
       if (/heic|heif/i.test(f.name) || /heic|heif/i.test(f.type)) heic = true;
-      if (e && (e.code === 'quota_or_state')) { toast('Skończyło się miejsce na zdjęcia w tej mapie.'); break; }
-      if (e && e.code === 'forbidden') { toast('To konto może tylko oglądać mapę, więc zdjęcia się nie zapiszą.'); break; }
-      if (e && e.code === 'auth') { toast('Sesja wygasła. Zaloguj się ponownie i dodaj zdjęcia jeszcze raz.'); break; }
-      if (e && e.code === 'rate_limited') await sleep(2500);
-      console.warn('upload failed', e);
+      job.failed++; job.done++; scheduleRender();
     }
-    job.done++;
-    scheduleRender();
   }
+  job.preparing--;
+  if (heic) toast('Część zdjęć była w formacie HEIC. Zapisz je jako JPG i spróbuj jeszcze raz.');
+  upqFinish(placeId);
+}
+/* ===== photo queue: a lost connection does not lose photos. The queue waits for signal and sends the same photo again
+   (same file name, so nothing doubles). On OneDrive the prepared photos are also kept in this browser (IndexedDB)
+   until they are sent, so they go out after the page is closed and opened again. ===== */
+const UPQ = { items: [], running: false, tries: 0, note: '', unsaved: [] }; // unsaved: sent photos kept in the browser until dane.json with them is saved
+const ownFiles = () => assets === folderAssets || assets === cloudAssets; // our own files get readable names; the Claude version names them itself
+const upOpt = name => (name ? { type: 'image/jpeg', name } : { type: 'image/jpeg' });
+const jobFor = placeId => S.uploads[placeId] || (S.uploads[placeId] = { total: 0, done: 0, failed: 0, ok: 0, preparing: 0 });
+const upqMap = () => (cloud ? `upq:${cloud.d}:${cloud.f}:` : 'mem:'); // which map a queued photo belongs to
+function idb(mode, fn) { // one transaction on the 'kv' store; resolves with the result(s) of the request(s) fn returns
+  return new Promise(res => {
+    try {
+      const r = indexedDB.open('mapa-podrozy', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onerror = () => res(null);
+      r.onsuccess = () => {
+        const dbh = r.result;
+        try {
+          const tx = dbh.transaction('kv', mode), q = fn(tx.objectStore('kv'));
+          tx.oncomplete = () => { dbh.close(); res(Array.isArray(q) ? q.map(x => x.result) : q ? q.result : null); };
+          tx.onerror = tx.onabort = () => { dbh.close(); res(null); };
+        } catch (e) { dbh.close(); res(null); }
+      };
+    } catch (e) { res(null); }
+  });
+}
+const upqRec = it => ({ placeId: it.placeId, name: it.name, full: it.full, thumb: it.thumb, w: it.w, h: it.h, at: it.at, st: it.st, id: it.id || null, t: it.t || null });
+const upqPut = it => (it.key ? idb('readwrite', st => st.put(upqRec(it), it.key)) : Promise.resolve());
+const upqDel = it => (it.key ? idb('readwrite', st => st.delete(it.key)) : Promise.resolve());
+async function upqAdd(it) {
+  it.map = upqMap();
+  if (cloud) { it.key = it.map + it.at + '-' + randHex(4); await upqPut(it); }
+  UPQ.items.push(it);
+  upqRun();
+}
+async function upqResume() { // OneDrive map opened: photos that did not make it last time
+  const k = upqMap();
+  if (!cloud || S.dbState !== 'ready') return;
+  const range = IDBKeyRange.bound(k, k + '￿');
+  const got = await idb('readonly', st => [st.getAllKeys(range), st.getAll(range)]);
+  if (!got) return;
+  let n = 0;
+  got[0].forEach((key, i) => {
+    const v = got[1][i];
+    if (!v || UPQ.items.some(x => x.key === key) || UPQ.unsaved.includes(key)) return;
+    UPQ.items.push(Object.assign({}, v, { key, map: k }));
+    jobFor(v.placeId).total++; n++;
+  });
+  if (n) { toast(`Wysyłam ${nPl(n, 'zdjęcie', 'zdjęcia', 'zdjęć')}, które nie zdążyły się zapisać.`); upqRun(); }
+}
+function upqDone(it, failed) {
+  UPQ.items = UPQ.items.filter(x => x !== it);
+  if (!failed && it.key) UPQ.unsaved.push(it.key); else upqDel(it);
+  const job = jobFor(it.placeId); job.done++;
+  if (failed) job.failed++; else job.ok++;
+  upqFinish(it.placeId);
+}
+function upqFinish(placeId) { // everything for this place sent (or given up): a short summary
+  const job = S.uploads[placeId];
+  if (!job || job.preparing || UPQ.items.some(x => x.placeId === placeId)) { scheduleRender(); renderStatusBox(); return; }
   delete S.uploads[placeId];
   render();
-  if (heic) toast('Część zdjęć była w formacie HEIC. Zapisz je jako JPG i spróbuj jeszcze raz.');
-  else if (job.failed) toast(`Dodano ${nPl(ok, 'zdjęcie', 'zdjęcia', 'zdjęć')}, ${job.failed} się nie udało.`);
-  else toast(`Dodano ${nPl(ok, 'zdjęcie', 'zdjęcia', 'zdjęć')}`);
+  if (job.total) toast(job.failed ? `Dodano ${nPl(job.ok, 'zdjęcie', 'zdjęcia', 'zdjęć')}, ${job.failed} się nie udało.` : `Dodano ${nPl(job.ok, 'zdjęcie', 'zdjęcia', 'zdjęć')}`);
 }
+function upqRetry(placeId) { // the "Ponów" button: photos that failed for another reason than the connection
+  for (const it of UPQ.items) if (it.placeId === placeId && it.fail) { it.fail = false; const job = jobFor(placeId); job.done--; job.failed--; }
+  UPQ.tries = 0; upqRun(); scheduleRender();
+}
+function upqSkip(placeId) {
+  for (const it of UPQ.items.filter(x => x.placeId === placeId && x.fail)) { const job = jobFor(placeId); job.done--; job.failed--; upqDone(it, true); }
+}
+async function upqRun() {
+  if (UPQ.running || !assets) return;
+  UPQ.running = true;
+  try {
+    for (;;) {
+      const it = UPQ.items.find(x => !x.fail && x.map === upqMap());
+      if (!it) break;
+      if (!S.places[it.placeId]) { // the place was deleted in the meantime
+        if (S.dbState !== 'ready') break;
+        if (it.st >= 1 && it.name) assets.delete(it.id).catch(() => {});
+        upqDone(it, true); continue;
+      }
+      try {
+        if (!it.st) { const a = await assets.upload(it.full, upOpt(it.name)); it.id = a.id; it.st = 1; await upqPut(it); }
+        if (it.st === 1) { const b = await assets.upload(it.thumb, upOpt(it.name && THUMBS + '/' + it.name)); it.t = b.id; it.st = 2; await upqPut(it); }
+        await patchPlace(it.placeId, d => { if (!d.photos.some(x => x.id === it.id)) d.photos.push({ id: it.id, t: it.t, w: it.w, h: it.h, c: '', at: it.at }); if (!d.cover) d.cover = it.id; });
+        UPQ.tries = 0; UPQ.note = '';
+        upqDone(it, false);
+      } catch (e) {
+        console.warn('upload', e);
+        if (isNet(e) || e.code === 'rate_limited' || e.status === 429 || (e.status >= 500 && e.status !== 507)) { // no signal: wait, then the same photo again
+          const ms = Math.min(30000, 3000 * 2 ** Math.min(UPQ.tries++, 4)); // 3, 6, 12, 24, 30 s…
+          UPQ.note = navigator.onLine === false ? 'czekam na zasięg' : 'słaby zasięg, ponawiam';
+          scheduleRender(); renderStatusBox();
+          await waitNet(ms);
+          continue;
+        }
+        if (e.code === 'auth') { UPQ.note = 'zaloguj się ponownie'; toast('Sesja wygasła. Zaloguj się ponownie, a zdjęcia wyślą się same.'); break; }
+        const stopAll = e.code === 'forbidden' || e.code === 'quota_or_state' || e.status === 507;
+        if (stopAll) toast(e.code === 'forbidden' ? 'To konto może tylko oglądać mapę, więc zdjęcia się nie zapiszą.' : 'Skończyło się miejsce na zdjęcia (OneDrive jest pełny).');
+        for (const x of stopAll ? UPQ.items.filter(y => !y.fail) : [it]) { x.fail = true; const job = jobFor(x.placeId); job.failed++; job.done++; }
+        scheduleRender();
+        if (stopAll) break;
+      }
+    }
+  } finally {
+    UPQ.running = false;
+    if (UPQ.note !== 'zaloguj się ponownie') UPQ.note = '';
+    scheduleRender(); renderStatusBox();
+  }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && netWake) netWake(); }); // back in the app: try at once
 
 function checkItem(it, onToggle, onEdit, content) {
   const done = !!it.done;
