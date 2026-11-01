@@ -1497,7 +1497,9 @@ function renderMap() {
         markers.push({ id: p.id, tripId: tid, x, y, num: i + 1, label: p.name, c, cover: cv ? (cv.t || cv.id) : null, kind: 'place' });
       });
     }
-    for (const g of GROUPS) if (g.idx >= 0) visitedIdx.add(g.idx);
+    if (S.tripId) { // one trip: only the countries of its stops
+      for (const p of stopsOf(S.tripId)) { if (!hasXY(p)) continue; const k = keyOfPlace(p); if (k[0] === 'c') visitedIdx.add(+k.slice(1)); }
+    } else for (const g of GROUPS) if (g.idx >= 0) visitedIdx.add(g.idx);
     for (const i of visitedIdx) gVisited.append(sv('path', { d: GEO.c[i][1], 'data-i': i }));
     for (const L of legs) {
       gRoutes.append(sv('path', { d: L.d, class: 'legBack' }));
