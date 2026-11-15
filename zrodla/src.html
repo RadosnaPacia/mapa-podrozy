@@ -279,6 +279,8 @@ body.panel-hidden .panelToggle svg{transform:scaleX(-1)}
 .ac-item span{font-size:13px;color:var(--ink-2);font-weight:600}
 .ac-item.on,.ac-item:hover{background:var(--accent-soft)}
 .ac-empty{padding:10px 14px;font-size:14px;color:var(--ink-2);font-weight:600}
+.ac-more{padding:10px 14px;font-size:13px;color:var(--ink-2);font-weight:600;border-top:1.5px solid var(--line)}
+.ac-src{padding:4px 14px 6px;font-size:11px;color:var(--ink-2);text-align:right;border-top:1.5px solid var(--line)}
 .datef{display:flex;gap:8px}
 .datef input{flex:1;min-width:0;letter-spacing:.5px}
 .calbtn{flex:none;width:48px;min-height:46px;border-radius:14px}
@@ -796,6 +798,21 @@ const MINW = 14, MAXW = 2600;
 const CITY_DATA = `Warszawa|Polska|52.23|21.01;Kraków|Polska|50.06|19.94;Gdańsk|Polska|54.35|18.65;Wrocław|Polska|51.11|17.03;Poznań|Polska|52.41|16.93;Zakopane|Polska|49.3|19.95;Starachowice|Polska|51.04|21.07;Łódź|Polska|51.76|19.46;Szczecin|Polska|53.43|14.55;Toruń|Polska|53.01|18.6;Lublin|Polska|51.25|22.57;Kielce|Polska|50.87|20.63;Sopot|Polska|54.44|18.56;Katowice|Polska|50.26|19.02;Rzeszów|Polska|50.04|22;Białystok|Polska|53.13|23.16;Olsztyn|Polska|53.78|20.49;Lizbona|Portugalia|38.72|-9.14;Porto|Portugalia|41.15|-8.61;Faro|Portugalia|37.02|-7.93;Quarteira|Portugalia|37.07|-8.1;Lagos|Portugalia|37.1|-8.67;Sintra|Portugalia|38.8|-9.38;Funchal|Portugalia|32.67|-16.92;Madera|Portugalia|32.67|-16.92;Azory|Portugalia|37.74|-25.67;Madryt|Hiszpania|40.42|-3.7;Barcelona|Hiszpania|41.39|2.17;Sewilla|Hiszpania|37.39|-5.98;Walencja|Hiszpania|39.47|-0.38;Malaga|Hiszpania|36.72|-4.42;Grenada|Hiszpania|37.18|-3.6;Palma de Mallorca|Hiszpania|39.57|2.65;Ibiza|Hiszpania|38.91|1.43;Teneryfa|Hiszpania|28.29|-16.63;Gran Canaria|Hiszpania|27.96|-15.59;Bilbao|Hiszpania|43.26|-2.93;Paryż|Francja|48.86|2.35;Disneyland Paris|Francja|48.87|2.78;Nicea|Francja|43.7|7.27;Marsylia|Francja|43.3|5.37;Lyon|Francja|45.76|4.84;Bordeaux|Francja|44.84|-0.58;Strasburg|Francja|48.57|7.75;Rzym|Włochy|41.9|12.5;Mediolan|Włochy|45.46|9.19;Wenecja|Włochy|45.44|12.32;Florencja|Włochy|43.77|11.26;Neapol|Włochy|40.85|14.27;Bolonia|Włochy|44.49|11.34;Piza|Włochy|43.72|10.4;Werona|Włochy|45.44|10.99;Palermo|Włochy|38.12|13.36;Katania|Włochy|37.5|15.09;Bari|Włochy|41.12|16.87;Cagliari|Włochy|39.22|9.12;Londyn|Wielka Brytania|51.51|-0.13;Edynburg|Wielka Brytania|55.95|-3.19;Manchester|Wielka Brytania|53.48|-2.24;Dublin|Irlandia|53.35|-6.26;Berlin|Niemcy|52.52|13.4;Monachium|Niemcy|48.14|11.58;Hamburg|Niemcy|53.55|9.99;Kolonia|Niemcy|50.94|6.96;Drezno|Niemcy|51.05|13.74;Amsterdam|Holandia|52.37|4.9;Rotterdam|Holandia|51.92|4.48;Bruksela|Belgia|50.85|4.35;Brugia|Belgia|51.21|3.22;Wiedeń|Austria|48.21|16.37;Salzburg|Austria|47.81|13.06;Zurych|Szwajcaria|47.38|8.54;Genewa|Szwajcaria|46.2|6.14;Praga|Czechy|50.08|14.44;Bratysława|Słowacja|48.15|17.11;Budapeszt|Węgry|47.5|19.04;Dubrownik|Chorwacja|42.65|18.09;Split|Chorwacja|43.51|16.44;Zagrzeb|Chorwacja|45.81|15.98;Lublana|Słowenia|46.06|14.51;Kotor|Czarnogóra|42.42|18.77;Tirana|Albania|41.33|19.82;Ateny|Grecja|37.98|23.73;Saloniki|Grecja|40.64|22.94;Santoryn|Grecja|36.39|25.46;Kreta|Grecja|35.34|25.13;Rodos|Grecja|36.43|28.22;Korfu|Grecja|39.62|19.92;Larnaka|Cypr|34.92|33.63;Stambuł|Turcja|41.01|28.98;Antalya|Turcja|36.9|30.7;Kopenhaga|Dania|55.68|12.57;Sztokholm|Szwecja|59.33|18.07;Oslo|Norwegia|59.91|10.75;Bergen|Norwegia|60.39|5.32;Tromsø|Norwegia|69.65|18.96;Helsinki|Finlandia|60.17|24.94;Reykjavík|Islandia|64.15|-21.94;Wilno|Litwa|54.69|25.28;Ryga|Łotwa|56.95|24.11;Tallin|Estonia|59.44|24.75;Valletta|Malta|35.9|14.51;Bukareszt|Rumunia|44.43|26.1;Sofia|Bułgaria|42.7|23.32;Belgrad|Serbia|44.79|20.45;Lwów|Ukraina|49.84|24.03;Tbilisi|Gruzja|41.72|44.79;Marrakesz|Maroko|31.63|-8;Kair|Egipt|30.04|31.24;Hurghada|Egipt|27.26|33.81;Tunis|Tunezja|36.81|10.18;Zanzibar|Tanzania|-6.16|39.19;Kapsztad|RPA|-33.92|18.42;Tokio|Japonia|35.68|139.69;Kioto|Japonia|35.01|135.77;Osaka|Japonia|34.69|135.5;Seul|Korea Płd.|37.57|126.98;Pekin|Chiny|39.9|116.41;Szanghaj|Chiny|31.23|121.47;Hongkong|Chiny|22.32|114.17;Tajpej|Tajwan|25.03|121.57;Bangkok|Tajlandia|13.76|100.5;Phuket|Tajlandia|7.88|98.39;Bali|Indonezja|-8.65|115.22;Singapur|Singapur|1.35|103.82;Kuala Lumpur|Malezja|3.14|101.69;Hanoi|Wietnam|21.03|105.85;Dubaj|ZEA|25.2|55.27;Malediwy|Malediwy|4.18|73.51;Kolombo|Sri Lanka|6.93|79.86;Delhi|Indie|28.61|77.21;Nowy Jork|USA|40.71|-74.01;Los Angeles|USA|34.05|-118.24;San Francisco|USA|37.77|-122.42;Las Vegas|USA|36.17|-115.14;Chicago|USA|41.88|-87.63;Miami|USA|25.76|-80.19;Orlando|USA|28.54|-81.38;Toronto|Kanada|43.65|-79.38;Vancouver|Kanada|49.28|-123.12;Meksyk|Meksyk|19.43|-99.13;Cancún|Meksyk|21.16|-86.85;Hawana|Kuba|23.11|-82.37;Rio de Janeiro|Brazylia|-22.91|-43.17;Buenos Aires|Argentyna|-34.6|-58.38;Lima|Peru|-12.05|-77.04;Cusco|Peru|-13.53|-71.97;Sydney|Australia|-33.87|151.21;Melbourne|Australia|-37.81|144.96;Auckland|Nowa Zelandia|-36.85|174.76`;
 const CITIES = CITY_DATA.split(';').map(r => { const [n, c, la, lo] = r.split('|'); return { n, c, lat: +la, lng: +lo }; });
 const findCity = name => CITIES.find(c => norm(c.n) === norm(name));
+/* places beyond the built-in list: Open-Meteo place search (GeoNames data, CC BY), Polish names, no key.
+   Only the typed text is sent. Without internet the built-in list still works. */
+const GEO_API = 'https://geocoding-api.open-meteo.com/v1/search';
+const geoCache = new Map();
+async function geoSearch(q, signal) {
+  const k = norm(q);
+  if (geoCache.has(k)) return geoCache.get(k);
+  const r = await fetch(`${GEO_API}?name=${encodeURIComponent(q.trim())}&count=10&language=pl&format=json`, { signal });
+  if (!r.ok) throw new Error('geo ' + r.status);
+  const j = await r.json();
+  const out = (j.results || []).filter(x => x && x.name && isFinite(x.latitude) && isFinite(x.longitude))
+    .map(x => ({ n: String(x.name), c: String(x.country || ''), r: String(x.admin1 || ''), lat: Math.round(x.latitude * 1e4) / 1e4, lng: Math.round(x.longitude * 1e4) / 1e4, web: true }));
+  geoCache.set(k, out);
+  return out;
+}
 
 /* ================= state ================= */
 const S = {
@@ -3499,29 +3516,52 @@ function cityField(id, label, value, onPick, hint, onType) {
   const input = inp(id, value, { autocomplete: 'off', autocorrect: 'off', autocapitalize: 'words', spellcheck: 'false', maxlength: 60, placeholder: 'Zacznij pisać, np. Lizb…', role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': id + '-list' });
   const list = h('div', { class: 'ac-list', id: id + '-list', role: 'listbox', hidden: true });
   let items = [], act = -1, picked = norm(value);
+  let web = [], webQ = '', webBusy = false, webT = 0, webAc = null; // results from the place search for the text webQ
   const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); act = -1; };
   const pick = c => { input.value = c.n; picked = norm(c.n); close(); onPick(c); };
   const paint = () => {
     const q = norm(input.value);
     if (!q || q === picked) return close();
-    items = CITIES.map(c => {
+    const local = CITIES.map(c => {
       const n = norm(c.n);
       const sc = n.startsWith(q) ? 0 : n.split(/[\s-]+/).some(w => w.startsWith(q)) ? 1 : n.includes(q) ? 2 : norm(c.c).startsWith(q) ? 3 : 9;
       return { c, sc };
-    }).filter(x => x.sc < 9).sort((a, b) => a.sc - b.sc || a.c.n.localeCompare(b.c.n, 'pl')).slice(0, 6);
-    list.replaceChildren(...(items.length
-      ? items.map((x, i) => h('button', { type: 'button', class: 'ac-item' + (i === act ? ' on' : ''), role: 'option', 'aria-selected': String(i === act), tabindex: -1, onpointerdown: e => e.preventDefault(), onclick: () => pick(x.c) }, h('b', null, x.c.n), h('span', null, x.c.c)))
-      : [h('div', { class: 'ac-empty' }, 'Nie mam tego miejsca na liście. Zostaw nazwę i wskaż je na mapie.')]));
+    }).filter(x => x.sc < 9).sort((a, b) => a.sc - b.sc || a.c.n.localeCompare(b.c.n, 'pl')).slice(0, 5).map(x => x.c);
+    const more = webQ === q ? web.filter(w => !local.some(c => norm(c.n) === norm(w.n) && Math.abs(c.lat - w.lat) < 0.3 && Math.abs(c.lng - w.lng) < 0.3)).slice(0, 6) : [];
+    items = [...local, ...more];
+    const row = (c, i) => h('button', { type: 'button', class: 'ac-item' + (i === act ? ' on' : ''), role: 'option', 'aria-selected': String(i === act), tabindex: -1, onpointerdown: e => e.preventDefault(), onclick: () => pick(c) },
+      h('b', null, c.n), h('span', null, [c.c, c.r].filter(Boolean).join(' · ')));
+    const busy = webBusy && q.length >= 3;
+    list.replaceChildren(...[...items.map(row),
+      busy ? h('div', { class: items.length ? 'ac-more' : 'ac-empty' }, 'Szukam więcej miejsc…') : null,
+      !items.length && !busy ? h('div', { class: 'ac-empty' }, 'Nie znalazłam takiego miejsca. Zostaw nazwę i wskaż je na mapie.') : null,
+      more.length ? h('div', { class: 'ac-src' }, 'więcej miejsc: GeoNames') : null].filter(Boolean));
     list.hidden = false; input.setAttribute('aria-expanded', 'true');
   };
-  input.addEventListener('input', () => { picked = ''; act = -1; paint(); if (onType) onType(input.value); });
-  input.addEventListener('focus', paint);
+  const search = () => { // the place search, a moment after typing stops
+    clearTimeout(webT); if (webAc) { webAc.abort(); webAc = null; }
+    const q = input.value.trim(), k = norm(q);
+    webBusy = k.length >= 3 && k !== picked;
+    if (!webBusy) return;
+    if (geoCache.has(k)) { web = geoCache.get(k); webQ = k; webBusy = false; return; }
+    webT = setTimeout(async () => {
+      const ac = webAc = new AbortController(), tm = setTimeout(() => ac.abort(), 8000);
+      let res = [];
+      try { res = await geoSearch(q, ac.signal); } catch (e) { if (ac !== webAc) return; } // offline or blocked: the built-in list only
+      finally { clearTimeout(tm); }
+      if (ac !== webAc) return;
+      webAc = null; web = res; webQ = k; webBusy = false;
+      if (!list.hidden || document.activeElement === input) paint();
+    }, 350);
+  };
+  input.addEventListener('input', () => { picked = ''; act = -1; search(); paint(); if (onType) onType(input.value); });
+  input.addEventListener('focus', () => { if (norm(input.value) !== webQ) search(); paint(); });
   input.addEventListener('blur', () => setTimeout(close, 200));
   input.addEventListener('keydown', e => {
     if (list.hidden || !items.length) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); act = (act + 1) % items.length; paint(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); act = (act - 1 + items.length) % items.length; paint(); }
-    else if (e.key === 'Enter' && act >= 0) { e.preventDefault(); pick(items[act].c); }
+    else if (e.key === 'Enter' && act >= 0) { e.preventDefault(); pick(items[act]); }
     else if (e.key === 'Escape') { e.stopPropagation(); close(); }
   });
   return h('div', { class: 'fld' }, h('label', { for: id }, label), input, list, hint ? h('p', { class: 'hint' }, hint) : null);
